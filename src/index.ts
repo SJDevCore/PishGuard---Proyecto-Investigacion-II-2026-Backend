@@ -9,10 +9,17 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL ?? "http://localhost:4200" }));
 app.use(express.json());
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OPCIONES = new Set(["phishing", "legitimo", "no_seguro"]);
 const CAPACITACIONES = new Set(["formal", "informal", "no"]);
-const FRECUENCIAS = new Set(["diaria", "varias_semana", "semanal", "mensual", "nunca"]);
+const FRECUENCIAS = new Set([
+  "diaria",
+  "varias_semana",
+  "semanal",
+  "mensual",
+  "nunca",
+]);
 
 function esUuid(valor: unknown): valor is string {
   return typeof valor === "string" && UUID_RE.test(valor);
@@ -53,13 +60,26 @@ function soloAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+const UMBRAL_APRESURADA_MS = 1000;
+
 const CONSULTA_RESPUESTAS = `
+  with calidad as (
+    select sesion_id,
+           percentile_cont(0.5) within group (order by latencia_ms) as mediana_ms,
+           count(*) filter (where respondido_en is null) = 0 as completa
+    from ensayos
+    group by sesion_id
+  )
   select e.sesion_id, se.programa, se.semestre, se.area_tecnologica,
          se.capacitacion_previa, se.frecuencia_uso, se.autoeficacia,
          se.iniciada_en, se.finalizada_en,
          case when se.iniciada_en is not null and se.finalizada_en is not null
            then round(extract(epoch from (se.finalizada_en - se.iniciada_en)) * 1000)::int
          end as duracion_sesion_ms,
+         round(c.mediana_ms)::int as mediana_latencia_ms,
+         c.completa as sesion_completa,
+         (c.mediana_ms < ${UMBRAL_APRESURADA_MS}) as sesion_apresurada,
+         (c.completa and c.mediana_ms >= ${UMBRAL_APRESURADA_MS}) as sesion_valida,
          e.posicion, s.id as estimulo_id, s.fase, s.canal, s.tipo, s.categoria,
          e.opcion, e.correcta, e.latencia_ms,
          round(extract(epoch from (e.respondido_en - e.mostrado_en)) * 1000)::int as servidor_ms,
@@ -67,6 +87,7 @@ const CONSULTA_RESPUESTAS = `
   from ensayos e
   join estimulos s on s.id = e.estimulo_id
   join sesiones se on se.id = e.sesion_id
+  join calidad c on c.sesion_id = e.sesion_id
   where e.respondido_en is not null`;
 
 app.get("/admin/respuestas", soloAdmin, async (_req, res) => {
@@ -206,7 +227,10 @@ app.get("/sesiones/:id/siguiente", async (req, res) => {
       [req.params.id],
     );
     res.setHeader("Cache-Control", "no-store");
-    return res.json({ fin: true, duracionMs: cierre.rows[0]?.duracion_ms ?? null });
+    return res.json({
+      fin: true,
+      duracionMs: cierre.rows[0]?.duracion_ms ?? null,
+    });
   }
 
   const { ensayoId, posicion, total, ...estimulo } = rows[0];
@@ -287,7 +311,10 @@ app.get("/salud", async (_req, res) => {
 });
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  console.error("Error no controlado:", error instanceof Error ? error.message : error);
+  console.error(
+    "Error no controlado:",
+    error instanceof Error ? error.message : error,
+  );
   if (res.headersSent) return;
   res.status(500).json({ error: "Error interno" });
 });
