@@ -6,7 +6,26 @@ import { Pool, PoolClient } from "pg";
 
 const db = new Pool({ connectionString: process.env.DATABASE_URL });
 const app = express();
-app.use(cors({ origin: process.env.FRONTEND_URL ?? "http://localhost:4200" }));
+const ORIGENES_PERMITIDOS = new Set(
+  [process.env.FRONTEND_URL, "http://localhost:4200"].filter(
+    Boolean,
+  ) as string[],
+);
+// Producción, alias y vistas previas de este proyecto en Vercel
+const DOMINIOS_VERCEL =
+  /^https:\/\/pish-guard-proyecto-inves[a-z0-9-]*?(-santiago-jimenezs-projects)?\.vercel\.app$/;
+
+app.use(
+  cors({
+    origin: (origen, cb) => {
+      const permitido =
+        !origen ||
+        ORIGENES_PERMITIDOS.has(origen) ||
+        DOMINIOS_VERCEL.test(origen);
+      cb(null, permitido);
+    },
+  }),
+);
 app.use(express.json());
 
 const UUID_RE =
