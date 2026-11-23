@@ -317,6 +317,10 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   );
   if (res.headersSent) return;
   res.status(500).json({ error: "Error interno" });
+
+  app.get("/ping", (_req, res) => {
+    res.type("text").send("ok");
+  });
 });
 
 app.listen(process.env.PORT ?? 3000, () => console.log("Backend listo"));
